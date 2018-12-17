@@ -49,7 +49,7 @@ func (e *SliceStringField) String() string {
 }
 
 func (e *SliceStringField) FieldType() int {
-	return TypeCharField
+	return TypeVarCharField
 }
 
 func (e *SliceStringField) SetRaw(value interface{}) error {
@@ -78,40 +78,43 @@ func (e *SliceStringField) RawValue() interface{} {
 var _ Fielder = new(SliceStringField)
 
 // A json field.
-type JSONField struct {
+type JSONFieldTest struct {
 	Name string
 	Data string
 }
 
-func (e *JSONField) String() string {
+func (e *JSONFieldTest) String() string {
 	data, _ := json.Marshal(e)
 	return string(data)
 }
 
-func (e *JSONField) FieldType() int {
+func (e *JSONFieldTest) FieldType() int {
 	return TypeTextField
 }
 
-func (e *JSONField) SetRaw(value interface{}) error {
+func (e *JSONFieldTest) SetRaw(value interface{}) error {
 	switch d := value.(type) {
 	case string:
 		return json.Unmarshal([]byte(d), e)
 	default:
-		return fmt.Errorf("<JsonField.SetRaw> unknown value `%v`", value)
+		return fmt.Errorf("<JSONField.SetRaw> unknown value `%v`", value)
 	}
 }
 
-func (e *JSONField) RawValue() interface{} {
+func (e *JSONFieldTest) RawValue() interface{} {
 	return e.String()
 }
 
-var _ Fielder = new(JSONField)
+var _ Fielder = new(JSONFieldTest)
 
 type Data struct {
 	ID       int `orm:"column(id)"`
 	Boolean  bool
 	Char     string    `orm:"size(50)"`
 	Text     string    `orm:"type(text)"`
+	JSON     string    `orm:"type(json);default({\"name\":\"json\"})"`
+	Jsonb    string    `orm:"type(jsonb)"`
+	Time     time.Time `orm:"type(time)"`
 	Date     time.Time `orm:"type(date)"`
 	DateTime time.Time `orm:"column(datetime)"`
 	Byte     byte
@@ -136,6 +139,9 @@ type DataNull struct {
 	Boolean     bool            `orm:"null"`
 	Char        string          `orm:"null;size(50)"`
 	Text        string          `orm:"null;type(text)"`
+	JSON        string          `orm:"type(json);null"`
+	Jsonb       string          `orm:"type(jsonb);null"`
+	Time        time.Time       `orm:"null;type(time)"`
 	Date        time.Time       `orm:"null;type(date)"`
 	DateTime    time.Time       `orm:"null;column(datetime)"`
 	Byte        byte            `orm:"null"`
@@ -175,6 +181,9 @@ type DataNull struct {
 	Float32Ptr  *float32        `orm:"null"`
 	Float64Ptr  *float64        `orm:"null"`
 	DecimalPtr  *float64        `orm:"digits(8);decimals(4);null"`
+	TimePtr     *time.Time      `orm:"null;type(time)"`
+	DatePtr     *time.Time      `orm:"null;type(date)"`
+	DateTimePtr *time.Time      `orm:"null"`
 }
 
 type String string
@@ -237,7 +246,7 @@ type User struct {
 	ShouldSkip   string    `orm:"-"`
 	Nums         int
 	Langs        SliceStringField `orm:"size(100)"`
-	Extra        JSONField        `orm:"type(text)"`
+	Extra        JSONFieldTest    `orm:"type(text)"`
 	unexport     bool             `orm:"-"`
 	unexportBool bool
 }
@@ -375,6 +384,33 @@ func NewInLine() *InLine {
 	return new(InLine)
 }
 
+type InLineOneToOne struct {
+	// Common Fields
+	ModelBase
+
+	Note   string
+	InLine *InLine `orm:"rel(fk);column(inline)"`
+}
+
+func NewInLineOneToOne() *InLineOneToOne {
+	return new(InLineOneToOne)
+}
+
+type IntegerPk struct {
+	ID    int64 `orm:"pk"`
+	Value string
+}
+
+type UintPk struct {
+	ID   uint32 `orm:"pk"`
+	Name string
+}
+
+type PtrPk struct {
+	ID       *IntegerPk `orm:"pk;rel(one)"`
+	Positive bool
+}
+
 var DBARGS = struct {
 	Driver string
 	Source string
@@ -397,53 +433,57 @@ var (
 	dDbBaser dbBaser
 )
 
+var (
+	helpinfo = `need driver and source!
+
+	Default DB Drivers.
+	
+	  driver: url
+	   mysql: https://github.com/go-sql-driver/mysql
+	 sqlite3: https://github.com/mattn/go-sqlite3
+	postgres: https://github.com/lib/pq
+	tidb: https://github.com/pingcap/tidb
+	
+	usage:
+	
+	go get -u github.com/astaxie/beego/orm
+	go get -u github.com/go-sql-driver/mysql
+	go get -u github.com/mattn/go-sqlite3
+	go get -u github.com/lib/pq
+	go get -u github.com/pingcap/tidb
+	
+	#### MySQL
+	mysql -u root -e 'create database orm_test;'
+	export ORM_DRIVER=mysql
+	export ORM_SOURCE="root:@/orm_test?charset=utf8"
+	go test -v github.com/astaxie/beego/orm
+	
+	
+	#### Sqlite3
+	export ORM_DRIVER=sqlite3
+	export ORM_SOURCE='file:memory_test?mode=memory'
+	go test -v github.com/astaxie/beego/orm
+	
+	
+	#### PostgreSQL
+	psql -c 'create database orm_test;' -U postgres
+	export ORM_DRIVER=postgres
+	export ORM_SOURCE="user=postgres dbname=orm_test sslmode=disable"
+	go test -v github.com/astaxie/beego/orm
+	
+	#### TiDB
+	export ORM_DRIVER=tidb
+	export ORM_SOURCE='memory://test/test'
+	go test -v github.com/astaxie/beego/orm
+	
+	`
+)
+
 func init() {
 	Debug, _ = StrTo(DBARGS.Debug).Bool()
 
 	if DBARGS.Driver == "" || DBARGS.Source == "" {
-		fmt.Println(`need driver and source!
-
-Default DB Drivers.
-
-  driver: url
-   mysql: https://github.com/go-sql-driver/mysql
- sqlite3: https://github.com/mattn/go-sqlite3
-postgres: https://github.com/lib/pq
-tidb: https://github.com/pingcap/tidb
-
-usage:
-
-go get -u github.com/astaxie/beego/orm
-go get -u github.com/go-sql-driver/mysql
-go get -u github.com/mattn/go-sqlite3
-go get -u github.com/lib/pq
-go get -u github.com/pingcap/tidb
-
-#### MySQL
-mysql -u root -e 'create database orm_test;'
-export ORM_DRIVER=mysql
-export ORM_SOURCE="root:@/orm_test?charset=utf8"
-go test -v github.com/astaxie/beego/orm
-
-
-#### Sqlite3
-export ORM_DRIVER=sqlite3
-export ORM_SOURCE='file:memory_test?mode=memory'
-go test -v github.com/astaxie/beego/orm
-
-
-#### PostgreSQL
-psql -c 'create database orm_test;' -U postgres
-export ORM_DRIVER=postgres
-export ORM_SOURCE="user=postgres dbname=orm_test sslmode=disable"
-go test -v github.com/astaxie/beego/orm
-
-#### TiDB
-export ORM_DRIVER=tidb
-export ORM_SOURCE='memory://test/test'
-go test -v github.com/astaxie/beego/orm
-
-`)
+		fmt.Println(helpinfo)
 		os.Exit(2)
 	}
 

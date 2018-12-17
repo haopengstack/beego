@@ -17,6 +17,7 @@ package beego
 import (
 	"errors"
 	"fmt"
+	"html"
 	"html/template"
 	"net/url"
 	"reflect"
@@ -24,6 +25,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+)
+
+const (
+	formatTime      = "15:04:05"
+	formatDate      = "2006-01-02"
+	formatDateTime  = "2006-01-02 15:04:05"
+	formatDateTimeT = "2006-01-02T15:04:05"
 )
 
 // Substr returns the substr from start to length.
@@ -46,26 +54,25 @@ func Substr(s string, start, length int) string {
 
 // HTML2str returns escaping text convert from html.
 func HTML2str(html string) string {
-	src := string(html)
 
-	re, _ := regexp.Compile("\\<[\\S\\s]+?\\>")
-	src = re.ReplaceAllStringFunc(src, strings.ToLower)
+	re, _ := regexp.Compile(`\<[\S\s]+?\>`)
+	html = re.ReplaceAllStringFunc(html, strings.ToLower)
 
 	//remove STYLE
-	re, _ = regexp.Compile("\\<style[\\S\\s]+?\\</style\\>")
-	src = re.ReplaceAllString(src, "")
+	re, _ = regexp.Compile(`\<style[\S\s]+?\</style\>`)
+	html = re.ReplaceAllString(html, "")
 
 	//remove SCRIPT
-	re, _ = regexp.Compile("\\<script[\\S\\s]+?\\</script\\>")
-	src = re.ReplaceAllString(src, "")
+	re, _ = regexp.Compile(`\<script[\S\s]+?\</script\>`)
+	html = re.ReplaceAllString(html, "")
 
-	re, _ = regexp.Compile("\\<[\\S\\s]+?\\>")
-	src = re.ReplaceAllString(src, "\n")
+	re, _ = regexp.Compile(`\<[\S\s]+?\>`)
+	html = re.ReplaceAllString(html, "\n")
 
-	re, _ = regexp.Compile("\\s{2,}")
-	src = re.ReplaceAllString(src, "\n")
+	re, _ = regexp.Compile(`\s{2,}`)
+	html = re.ReplaceAllString(html, "\n")
 
-	return strings.TrimSpace(src)
+	return strings.TrimSpace(html)
 }
 
 // DateFormat takes a time and a layout string and returns a string with the formatted date. Used by the template parser as "dateformat"
@@ -78,24 +85,24 @@ func DateFormat(t time.Time, layout string) (datestring string) {
 var datePatterns = []string{
 	// year
 	"Y", "2006", // A full numeric representation of a year, 4 digits   Examples: 1999 or 2003
-	"y", "06", //A two digit representation of a year   Examples: 99 or 03
+	"y", "06",   //A two digit representation of a year   Examples: 99 or 03
 
 	// month
-	"m", "01", // Numeric representation of a month, with leading zeros 01 through 12
-	"n", "1", // Numeric representation of a month, without leading zeros   1 through 12
-	"M", "Jan", // A short textual representation of a month, three letters Jan through Dec
+	"m", "01",      // Numeric representation of a month, with leading zeros 01 through 12
+	"n", "1",       // Numeric representation of a month, without leading zeros   1 through 12
+	"M", "Jan",     // A short textual representation of a month, three letters Jan through Dec
 	"F", "January", // A full textual representation of a month, such as January or March   January through December
 
 	// day
 	"d", "02", // Day of the month, 2 digits with leading zeros 01 to 31
-	"j", "2", // Day of the month without leading zeros 1 to 31
+	"j", "2",  // Day of the month without leading zeros 1 to 31
 
 	// week
-	"D", "Mon", // A textual representation of a day, three letters Mon through Sun
+	"D", "Mon",    // A textual representation of a day, three letters Mon through Sun
 	"l", "Monday", // A full textual representation of the day of the week  Sunday through Saturday
 
 	// time
-	"g", "3", // 12-hour format of an hour without leading zeros    1 through 12
+	"g", "3",  // 12-hour format of an hour without leading zeros    1 through 12
 	"G", "15", // 24-hour format of an hour without leading zeros   0 through 23
 	"h", "03", // 12-hour format of an hour with leading zeros  01 through 12
 	"H", "15", // 24-hour format of an hour with leading zeros  00 through 23
@@ -193,7 +200,7 @@ func Str2html(raw string) template.HTML {
 }
 
 // Htmlquote returns quoted html string.
-func Htmlquote(src string) string {
+func Htmlquote(text string) string {
 	//HTML编码为实体符号
 	/*
 	   Encodes `text` for raw use in HTML.
@@ -201,22 +208,18 @@ func Htmlquote(src string) string {
 	       '&lt;&#39;&amp;&quot;&gt;'
 	*/
 
-	text := string(src)
-
-	text = strings.Replace(text, "&", "&amp;", -1) // Must be done first!
-	text = strings.Replace(text, "<", "&lt;", -1)
-	text = strings.Replace(text, ">", "&gt;", -1)
-	text = strings.Replace(text, "'", "&#39;", -1)
-	text = strings.Replace(text, "\"", "&quot;", -1)
-	text = strings.Replace(text, "“", "&ldquo;", -1)
-	text = strings.Replace(text, "”", "&rdquo;", -1)
-	text = strings.Replace(text, " ", "&nbsp;", -1)
+	text = html.EscapeString(text)
+	text = strings.NewReplacer(
+		`“`, "&ldquo;",
+		`”`, "&rdquo;",
+		` `, "&nbsp;",
+	).Replace(text)
 
 	return strings.TrimSpace(text)
 }
 
 // Htmlunquote returns unquoted html string.
-func Htmlunquote(src string) string {
+func Htmlunquote(text string) string {
 	//实体符号解释为HTML
 	/*
 	   Decodes `text` that's HTML quoted.
@@ -224,18 +227,7 @@ func Htmlunquote(src string) string {
 	       '<\\'&">'
 	*/
 
-	// strings.Replace(s, old, new, n)
-	// 在s字符串中，把old字符串替换为new字符串，n表示替换的次数，小于0表示全部替换
-
-	text := string(src)
-	text = strings.Replace(text, "&nbsp;", " ", -1)
-	text = strings.Replace(text, "&rdquo;", "”", -1)
-	text = strings.Replace(text, "&ldquo;", "“", -1)
-	text = strings.Replace(text, "&quot;", "\"", -1)
-	text = strings.Replace(text, "&#39;", "'", -1)
-	text = strings.Replace(text, "&gt;", ">", -1)
-	text = strings.Replace(text, "&lt;", "<", -1)
-	text = strings.Replace(text, "&amp;", "&", -1) // Must be done last!
+	text = html.UnescapeString(text)
 
 	return strings.TrimSpace(text)
 }
@@ -262,33 +254,24 @@ func URLFor(endpoint string, values ...interface{}) string {
 }
 
 // AssetsJs returns script tag with src string.
-func AssetsJs(src string) template.HTML {
-	text := string(src)
+func AssetsJs(text string) template.HTML {
 
-	text = "<script src=\"" + src + "\"></script>"
+	text = "<script src=\"" + text + "\"></script>"
 
 	return template.HTML(text)
 }
 
 // AssetsCSS returns stylesheet link tag with src string.
-func AssetsCSS(src string) template.HTML {
-	text := string(src)
+func AssetsCSS(text string) template.HTML {
 
-	text = "<link href=\"" + src + "\" rel=\"stylesheet\" />"
+	text = "<link href=\"" + text + "\" rel=\"stylesheet\" />"
 
 	return template.HTML(text)
 }
 
 // ParseForm will parse form values to struct via tag.
-func ParseForm(form url.Values, obj interface{}) error {
-	objT := reflect.TypeOf(obj)
-	objV := reflect.ValueOf(obj)
-	if !isStructPtr(objT) {
-		return fmt.Errorf("%v must be  a struct pointer", obj)
-	}
-	objT = objT.Elem()
-	objV = objV.Elem()
-
+// Support for anonymous struct.
+func parseFormToStruct(form url.Values, objT reflect.Type, objV reflect.Value) error {
 	for i := 0; i < objT.NumField(); i++ {
 		fieldV := objV.Field(i)
 		if !fieldV.CanSet() {
@@ -296,6 +279,14 @@ func ParseForm(form url.Values, obj interface{}) error {
 		}
 
 		fieldT := objT.Field(i)
+		if fieldT.Anonymous && fieldT.Type.Kind() == reflect.Struct {
+			err := parseFormToStruct(form, fieldT.Type, fieldV)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
 		tags := strings.Split(fieldT.Tag.Get("form"), ",")
 		var tag string
 		if len(tags) == 0 || len(tags[0]) == 0 {
@@ -351,11 +342,32 @@ func ParseForm(form url.Values, obj interface{}) error {
 		case reflect.Struct:
 			switch fieldT.Type.String() {
 			case "time.Time":
-				format := time.RFC3339
-				if len(tags) > 1 {
-					format = tags[1]
+				var (
+					t   time.Time
+					err error
+				)
+				if len(value) >= 25 {
+					value = value[:25]
+					t, err = time.ParseInLocation(time.RFC3339, value, time.Local)
+				} else if len(value) >= 19 {
+					if strings.Contains(value, "T") {
+						value = value[:19]
+						t, err = time.ParseInLocation(formatDateTimeT, value, time.Local)
+					} else {
+						value = value[:19]
+						t, err = time.ParseInLocation(formatDateTime, value, time.Local)
+					}
+				} else if len(value) >= 10 {
+					if len(value) > 10 {
+						value = value[:10]
+					}
+					t, err = time.ParseInLocation(formatDate, value, time.Local)
+				} else if len(value) >= 8 {
+					if len(value) > 8 {
+						value = value[:8]
+					}
+					t, err = time.ParseInLocation(formatTime, value, time.Local)
 				}
-				t, err := time.ParseInLocation(format, value, time.Local)
 				if err != nil {
 					return err
 				}
@@ -382,6 +394,19 @@ func ParseForm(form url.Values, obj interface{}) error {
 		}
 	}
 	return nil
+}
+
+// ParseForm will parse form values to struct via tag.
+func ParseForm(form url.Values, obj interface{}) error {
+	objT := reflect.TypeOf(obj)
+	objV := reflect.ValueOf(obj)
+	if !isStructPtr(objT) {
+		return fmt.Errorf("%v must be  a struct pointer", obj)
+	}
+	objT = objT.Elem()
+	objV = objV.Elem()
+
+	return parseFormToStruct(form, objT, objV)
 }
 
 var sliceOfInts = reflect.TypeOf([]int(nil))
@@ -421,18 +446,18 @@ func RenderForm(obj interface{}) template.HTML {
 
 		fieldT := objT.Field(i)
 
-		label, name, fType, id, class, ignored := parseFormTag(fieldT)
+		label, name, fType, id, class, ignored, required := parseFormTag(fieldT)
 		if ignored {
 			continue
 		}
 
-		raw = append(raw, renderFormField(label, name, fType, fieldV.Interface(), id, class))
+		raw = append(raw, renderFormField(label, name, fType, fieldV.Interface(), id, class, required))
 	}
 	return template.HTML(strings.Join(raw, "</br>"))
 }
 
 // renderFormField returns a string containing HTML of a single form field.
-func renderFormField(label, name, fType string, value interface{}, id string, class string) string {
+func renderFormField(label, name, fType string, value interface{}, id string, class string, required bool) string {
 	if id != "" {
 		id = " id=\"" + id + "\""
 	}
@@ -441,11 +466,16 @@ func renderFormField(label, name, fType string, value interface{}, id string, cl
 		class = " class=\"" + class + "\""
 	}
 
-	if isValidForInput(fType) {
-		return fmt.Sprintf(`%v<input%v%v name="%v" type="%v" value="%v">`, label, id, class, name, fType, value)
+	requiredString := ""
+	if required {
+		requiredString = " required"
 	}
 
-	return fmt.Sprintf(`%v<%v%v%v name="%v">%v</%v>`, label, fType, id, class, name, value, fType)
+	if isValidForInput(fType) {
+		return fmt.Sprintf(`%v<input%v%v name="%v" type="%v" value="%v"%v>`, label, id, class, name, fType, value, requiredString)
+	}
+
+	return fmt.Sprintf(`%v<%v%v%v name="%v"%v>%v</%v>`, label, fType, id, class, name, requiredString, value, fType)
 }
 
 // isValidForInput checks if fType is a valid value for the `type` property of an HTML input element.
@@ -461,7 +491,7 @@ func isValidForInput(fType string) bool {
 
 // parseFormTag takes the stuct-tag of a StructField and parses the `form` value.
 // returned are the form label, name-property, type and wether the field should be ignored.
-func parseFormTag(fieldT reflect.StructField) (label, name, fType string, id string, class string, ignored bool) {
+func parseFormTag(fieldT reflect.StructField) (label, name, fType string, id string, class string, ignored bool, required bool) {
 	tags := strings.Split(fieldT.Tag.Get("form"), ",")
 	label = fieldT.Name + ": "
 	name = fieldT.Name
@@ -469,6 +499,12 @@ func parseFormTag(fieldT reflect.StructField) (label, name, fType string, id str
 	ignored = false
 	id = fieldT.Tag.Get("id")
 	class = fieldT.Tag.Get("class")
+
+	required = false
+	requiredField := fieldT.Tag.Get("required")
+	if requiredField != "-" && requiredField != "" {
+		required, _ = strconv.ParseBool(requiredField)
+	}
 
 	switch len(tags) {
 	case 1:
@@ -496,6 +532,7 @@ func parseFormTag(fieldT reflect.StructField) (label, name, fType string, id str
 			label = tags[2]
 		}
 	}
+
 	return
 }
 
@@ -655,7 +692,7 @@ func ge(arg1, arg2 interface{}) (bool, error) {
 
 // MapGet getting value from map by keys
 // usage:
-// Data["m"] = map[string]interface{} {
+// Data["m"] = M{
 //     "a": 1,
 //     "1": map[string]float64{
 //         "c": 4,

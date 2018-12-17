@@ -15,6 +15,7 @@
 package orm
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -55,16 +56,19 @@ func ColValue(opt operator, value interface{}) interface{} {
 
 // real query struct
 type querySet struct {
-	mi       *modelInfo
-	cond     *Condition
-	related  []string
-	relDepth int
-	limit    int64
-	offset   int64
-	groups   []string
-	orders   []string
-	distinct bool
-	orm      *orm
+	mi         *modelInfo
+	cond       *Condition
+	related    []string
+	relDepth   int
+	limit      int64
+	offset     int64
+	groups     []string
+	orders     []string
+	distinct   bool
+	forupdate  bool
+	orm        *orm
+	ctx        context.Context
+	forContext bool
 }
 
 var _ QuerySeter = new(querySet)
@@ -75,6 +79,15 @@ func (o querySet) Filter(expr string, args ...interface{}) QuerySeter {
 		o.cond = NewCondition()
 	}
 	o.cond = o.cond.And(expr, args...)
+	return &o
+}
+
+// add raw sql to querySeter.
+func (o querySet) FilterRaw(expr string, sql string) QuerySeter {
+	if o.cond == nil {
+		o.cond = NewCondition()
+	}
+	o.cond = o.cond.Raw(expr, sql)
 	return &o
 }
 
@@ -127,6 +140,12 @@ func (o querySet) Distinct() QuerySeter {
 	return &o
 }
 
+// add FOR UPDATE to SELECT
+func (o querySet) ForUpdate() QuerySeter {
+	o.forupdate = true
+	return &o
+}
+
 // set relation model to query together.
 // it will query relation models and assign to parent model.
 func (o querySet) RelatedSel(params ...interface{}) QuerySeter {
@@ -151,6 +170,11 @@ func (o querySet) RelatedSel(params ...interface{}) QuerySeter {
 func (o querySet) SetCond(cond *Condition) QuerySeter {
 	o.cond = cond
 	return &o
+}
+
+// get condition from QuerySeter
+func (o querySet) GetCond() *Condition {
+	return o.cond
 }
 
 // return QuerySeter execution result number
@@ -192,15 +216,17 @@ func (o *querySet) All(container interface{}, cols ...string) (int64, error) {
 // query one row data and map to containers.
 // cols means the columns when querying.
 func (o *querySet) One(container interface{}, cols ...string) error {
+	o.limit = 1
 	num, err := o.orm.alias.DbBaser.ReadBatch(o.orm.db, o, o.mi, o.cond, container, o.orm.alias.TZ, cols)
 	if err != nil {
 		return err
 	}
-	if num > 1 {
-		return ErrMultiRows
-	}
 	if num == 0 {
 		return ErrNoRows
+	}
+
+	if num > 1 {
+		return ErrMultiRows
 	}
 	return nil
 }
@@ -250,6 +276,13 @@ func (o *querySet) RowsToMap(result *Params, keyCol, valueCol string) (int64, er
 // }
 func (o *querySet) RowsToStruct(ptrStruct interface{}, keyCol, valueCol string) (int64, error) {
 	panic(ErrNotImplement)
+}
+
+// set context to QuerySeter.
+func (o querySet) WithContext(ctx context.Context) QuerySeter {
+	o.ctx = ctx
+	o.forContext = true
+	return &o
 }
 
 // create new QuerySeter.

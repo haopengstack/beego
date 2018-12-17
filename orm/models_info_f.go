@@ -47,7 +47,7 @@ func (f *fields) Add(fi *fieldInfo) (added bool) {
 	} else {
 		return
 	}
-	if _, ok := f.fieldsByType[fi.fieldType]; ok == false {
+	if _, ok := f.fieldsByType[fi.fieldType]; !ok {
 		f.fieldsByType[fi.fieldType] = make([]*fieldInfo, 0)
 	}
 	f.fieldsByType[fi.fieldType] = append(f.fieldsByType[fi.fieldType], fi)
@@ -104,7 +104,7 @@ type fieldInfo struct {
 	mi                  *modelInfo
 	fieldIndex          []int
 	fieldType           int
-	dbcol               bool
+	dbcol               bool // table column fk and onetoone
 	inModel             bool
 	name                string
 	fullName            string
@@ -116,12 +116,13 @@ type fieldInfo struct {
 	null                bool
 	index               bool
 	unique              bool
-	colDefault          bool
-	initial             StrTo
+	colDefault          bool  // whether has default tag
+	initial             StrTo // store the default value
 	size                int
+	toText              bool
 	autoNow             bool
 	autoNowAdd          bool
-	rel                 bool
+	rel                 bool // if type equal to RelForeignKey, RelOneToOne, RelManyToMany then true
 	reverse             bool
 	reverseField        string
 	reverseFieldInfo    *fieldInfo
@@ -133,8 +134,9 @@ type fieldInfo struct {
 	relModelInfo        *modelInfo
 	digits              int
 	decimals            int
-	isFielder           bool
+	isFielder           bool // implement Fielder interface
 	onDelete            string
+	description         string
 }
 
 // new field info
@@ -142,7 +144,7 @@ func newFieldInfo(mi *modelInfo, field reflect.Value, sf reflect.StructField, mN
 	var (
 		tag       string
 		tagValue  string
-		initial   StrTo
+		initial   StrTo // store the default value
 		fieldType int
 		attrs     map[string]bool
 		tags      map[string]string
@@ -151,6 +153,10 @@ func newFieldInfo(mi *modelInfo, field reflect.Value, sf reflect.StructField, mN
 
 	fi = new(fieldInfo)
 
+	// if field which CanAddr is the follow type
+	//  A value is addressable if it is an element of a slice,
+	//  an element of an addressable array, a field of an
+	//  addressable struct, or the result of dereferencing a pointer.
 	addrField = field
 	if field.CanAddr() && field.Kind() != reflect.Ptr {
 		addrField = field.Addr()
@@ -161,7 +167,7 @@ func newFieldInfo(mi *modelInfo, field reflect.Value, sf reflect.StructField, mN
 		}
 	}
 
-	parseStructTag(sf.Tag.Get(defaultStructTagName), &attrs, &tags)
+	attrs, tags = parseStructTag(sf.Tag.Get(defaultStructTagName))
 
 	if _, ok := attrs["-"]; ok {
 		return nil, errSkipField
@@ -187,7 +193,7 @@ checkType:
 		}
 		fieldType = f.FieldType()
 		if fieldType&IsRelField > 0 {
-			err = fmt.Errorf("unsupport rel type custom field")
+			err = fmt.Errorf("unsupport type custom field, please refer to https://github.com/astaxie/beego/blob/master/orm/models_fields.go#L24-L42")
 			goto end
 		}
 	default:
@@ -210,7 +216,7 @@ checkType:
 				}
 				break checkType
 			default:
-				err = fmt.Errorf("error")
+				err = fmt.Errorf("rel only allow these value: fk, one, m2m")
 				goto wrongTag
 			}
 		}
@@ -230,7 +236,7 @@ checkType:
 				}
 				break checkType
 			default:
-				err = fmt.Errorf("error")
+				err = fmt.Errorf("reverse only allow these value: one, many")
 				goto wrongTag
 			}
 		}
@@ -239,8 +245,17 @@ checkType:
 		if err != nil {
 			goto end
 		}
-		if fieldType == TypeCharField && tags["type"] == "text" {
-			fieldType = TypeTextField
+		if fieldType == TypeVarCharField {
+			switch tags["type"] {
+			case "char":
+				fieldType = TypeCharField
+			case "text":
+				fieldType = TypeTextField
+			case "json":
+				fieldType = TypeJSONField
+			case "jsonb":
+				fieldType = TypeJsonbField
+			}
 		}
 		if fieldType == TypeFloatField && (digits != "" || decimals != "") {
 			fieldType = TypeDecimalField
@@ -248,8 +263,14 @@ checkType:
 		if fieldType == TypeDateTimeField && tags["type"] == "date" {
 			fieldType = TypeDateField
 		}
+		if fieldType == TypeTimeField && tags["type"] == "time" {
+			fieldType = TypeTimeField
+		}
 	}
 
+	// check the rel and reverse type
+	// rel should Ptr
+	// reverse should slice []*struct
 	switch fieldType {
 	case RelForeignKey, RelOneToOne, RelReverseOne:
 		if field.Kind() != reflect.Ptr {
@@ -280,6 +301,7 @@ checkType:
 	fi.sf = sf
 	fi.fullName = mi.fullName + mName + "." + sf.Name
 
+	fi.description = sf.Tag.Get("description")
 	fi.null = attrs["null"]
 	fi.index = attrs["index"]
 	fi.auto = attrs["auto"]
@@ -316,12 +338,12 @@ checkType:
 		switch onDelete {
 		case odCascade, odDoNothing:
 		case odSetDefault:
-			if initial.Exist() == false {
+			if !initial.Exist() {
 				err = errors.New("on_delete: set_default need set field a default value")
 				goto end
 			}
 		case odSetNULL:
-			if fi.null == false {
+			if !fi.null {
 				err = errors.New("on_delete: set_null need set field null")
 				goto end
 			}
@@ -339,7 +361,7 @@ checkType:
 
 	switch fieldType {
 	case TypeBooleanField:
-	case TypeCharField:
+	case TypeVarCharField, TypeCharField, TypeJSONField, TypeJsonbField:
 		if size != "" {
 			v, e := StrTo(size).Int32()
 			if e != nil {
@@ -349,11 +371,12 @@ checkType:
 			}
 		} else {
 			fi.size = 255
+			fi.toText = true
 		}
 	case TypeTextField:
 		fi.index = false
 		fi.unique = false
-	case TypeDateField, TypeDateTimeField:
+	case TypeTimeField, TypeDateField, TypeDateTimeField:
 		if attrs["auto_now"] {
 			fi.autoNow = true
 		} else if attrs["auto_now_add"] {
@@ -387,14 +410,12 @@ checkType:
 
 	if fi.auto || fi.pk {
 		if fi.auto {
-
 			switch addrField.Elem().Kind() {
 			case reflect.Int, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint32, reflect.Uint64:
 			default:
 				err = fmt.Errorf("auto primary key only support int, int32, int64, uint, uint32, uint64 but found `%s`", addrField.Elem().Kind())
 				goto end
 			}
-
 			fi.pk = true
 		}
 		fi.null = false
@@ -406,8 +427,8 @@ checkType:
 		fi.index = false
 	}
 
-	if fi.auto || fi.pk || fi.unique || fieldType == TypeDateField || fieldType == TypeDateTimeField {
-		// can not set default
+	// can not set default for these type
+	if fi.auto || fi.pk || fi.unique || fieldType == TypeTimeField || fieldType == TypeDateField || fieldType == TypeDateTimeField {
 		initial.Clear()
 	}
 
